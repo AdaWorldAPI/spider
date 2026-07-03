@@ -322,22 +322,29 @@ macro_rules! chrome_page_fetch {
                 // ── In-request gateway re-acquire (retry the acquisition) ──
                 //
                 // The loop above re-renders on a fresh *tab* of the same browser.
-                // If that browser is dead — e.g. the first-byte watchdog saw the
-                // gateway's ~35s pool-acquisition timeout and flipped
-                // `browser_dead` — those tab retries can't recover it. Open a
-                // fresh connection (`HedgeBrowser`) to re-run the acquisition and
-                // re-render on it. NOTE: the gateway exposes no per-backend
-                // address, so this re-dials the LB ingress — a fresh acquisition,
-                // not a physical-peer pin; it still helps because the ~28%
-                // acquisition-timeout is roughly independent per attempt. Bounded
-                // budget, independent of `config.retry`; gives up if it keeps
-                // failing (no infinite loop).
+                // If that browser is dead — e.g. the first-byte watchdog saw a
+                // gateway acquisition timeout and flipped `browser_dead` — those
+                // tab retries can't recover it. Open a fresh connection
+                // (`HedgeBrowser`) to re-run the acquisition and re-render on it.
+                // NOTE: the endpoint may resolve to a gateway ingress rather than
+                // a specific backend, so this is a fresh acquisition, not a pinned
+                // reconnect; it still helps when acquisition failures are roughly
+                // independent per attempt. Bounded budget, independent of
+                // `config.retry`; gives up if it keeps failing (no infinite loop).
+                //
+                // A jittered delay precedes each attempt so concurrent requests
+                // that all observe the same gateway saturation don't re-acquire in
+                // lockstep (thundering herd). Opt out at runtime with
+                // `SPIDER_CHROME_REACQUIRE=0`.
                 //
                 // Skipped under `chrome_store_page`: there the subscriber keeps
                 // the live tab past this scope, so a reconnected browser can't be
                 // disposed at scope exit without Page-level lifetime plumbing.
-                if !cfg!(feature = "chrome_store_page") {
+                if !cfg!(feature = "chrome_store_page")
+                    && crate::features::chrome::chrome_reacquire_enabled()
+                {
                     let mut reacquire_budget: u32 = 2;
+                    let mut reacquire_attempt: u32 = 0;
                     while reacquire_budget > 0
                         && $shared.11.load(std::sync::atomic::Ordering::Acquire)
                         && (page.needs_retry() || page.is_empty())
@@ -348,6 +355,14 @@ macro_rules! chrome_page_fetch {
                             $target_url,
                             reacquire_budget
                         );
+                        // Decorrelate concurrent re-acquisitions with full jitter
+                        // so a saturated gateway isn't hit in lockstep.
+                        let reacquire_jitter =
+                            crate::utils::backoff::backoff_delay(reacquire_attempt, 250, 5_000);
+                        reacquire_attempt += 1;
+                        if !reacquire_jitter.is_zero() {
+                            tokio::time::sleep(reacquire_jitter).await;
+                        }
                         // Fresh acquisition via the gateway (HedgeBrowser).
                         // `None` => re-acquire failed; give up rather than loop.
                         match crate::features::chrome::HedgeBrowser::connect(&$shared.5, &$shared.6)
@@ -398,8 +413,8 @@ macro_rules! chrome_page_fetch {
                                             $shared.6.max_page_bytes,
                                             $shared.6.get_cache_options(),
                                             $shared.6.cache_namespace_str(),
-                                            // Watch the physical peer's own death
-                                            // flag + its direct endpoint.
+                                            // Watch the fresh connection's own
+                                            // death flag + its endpoint.
                                             &$shared
                                                 .6
                                                 .chrome_fetch_params()
@@ -5012,17 +5027,23 @@ impl Website {
 
             // ── In-request gateway re-acquire (retry the acquisition) ──
             // The retries above re-render on the same tab/browser. If that
-            // browser died — e.g. the first-byte watchdog saw the gateway's ~35s
-            // pool-acquisition timeout and flipped `browser_dead` — re-dial the
+            // browser died — e.g. the first-byte watchdog saw a gateway
+            // acquisition timeout and flipped `browser_dead` — re-dial the
             // gateway (`browser.websocket_address()`) for a fresh acquisition and
-            // re-render on it. NOTE: the gateway exposes no per-backend address,
-            // so this is a fresh LB acquisition, not a physical-peer pin; it
-            // still helps because the ~28% acquisition-timeout is roughly
-            // independent per attempt. Bounded budget; gives up if it keeps
-            // failing. Skipped under `chrome_store_page` (the subscriber keeps
-            // the live tab past this scope).
-            if !cfg!(feature = "chrome_store_page") {
+            // re-render on it. NOTE: the endpoint may resolve to a gateway
+            // ingress rather than a specific backend, so this is a fresh
+            // acquisition, not a pinned reconnect; it still helps when
+            // acquisition failures are roughly independent per attempt. Bounded
+            // budget; gives up if it keeps failing. A jittered delay precedes
+            // each attempt so concurrent requests don't re-acquire in lockstep
+            // (opt out with `SPIDER_CHROME_REACQUIRE=0`). Skipped under
+            // `chrome_store_page` (the subscriber keeps the live tab past this
+            // scope).
+            if !cfg!(feature = "chrome_store_page")
+                && crate::features::chrome::chrome_reacquire_enabled()
+            {
                 let mut reacquire_budget: u32 = 2;
+                let mut reacquire_attempt: u32 = 0;
                 while reacquire_budget > 0
                     && browser_dead.load(std::sync::atomic::Ordering::Acquire)
                     && (page.needs_retry() || page.is_empty())
@@ -5033,6 +5054,14 @@ impl Website {
                         self.url.inner().as_str(),
                         reacquire_budget
                     );
+                    // Decorrelate concurrent re-acquisitions with full jitter
+                    // so a saturated gateway isn't hit in lockstep.
+                    let reacquire_jitter =
+                        crate::utils::backoff::backoff_delay(reacquire_attempt, 250, 5_000);
+                    reacquire_attempt += 1;
+                    if !reacquire_jitter.is_zero() {
+                        tokio::time::sleep(reacquire_jitter).await;
+                    }
                     match crate::features::chrome::relaunch_browser_at(
                         browser.websocket_address().clone(),
                         &self.configuration,
@@ -5425,17 +5454,23 @@ impl Website {
 
             // ── In-request gateway re-acquire (retry the acquisition) ──
             // The retries above re-render on the same tab/browser. If that
-            // browser died — e.g. the first-byte watchdog saw the gateway's ~35s
-            // pool-acquisition timeout and flipped `browser_dead` — re-dial the
+            // browser died — e.g. the first-byte watchdog saw a gateway
+            // acquisition timeout and flipped `browser_dead` — re-dial the
             // gateway (`browser.websocket_address()`) for a fresh acquisition and
-            // re-render on it. NOTE: the gateway exposes no per-backend address,
-            // so this is a fresh LB acquisition, not a physical-peer pin; it
-            // still helps because the ~28% acquisition-timeout is roughly
-            // independent per attempt. Bounded budget; gives up if it keeps
-            // failing. Skipped under `chrome_store_page` (the subscriber keeps
-            // the live tab past this scope).
-            if !cfg!(feature = "chrome_store_page") {
+            // re-render on it. NOTE: the endpoint may resolve to a gateway
+            // ingress rather than a specific backend, so this is a fresh
+            // acquisition, not a pinned reconnect; it still helps when
+            // acquisition failures are roughly independent per attempt. Bounded
+            // budget; gives up if it keeps failing. A jittered delay precedes
+            // each attempt so concurrent requests don't re-acquire in lockstep
+            // (opt out with `SPIDER_CHROME_REACQUIRE=0`). Skipped under
+            // `chrome_store_page` (the subscriber keeps the live tab past this
+            // scope).
+            if !cfg!(feature = "chrome_store_page")
+                && crate::features::chrome::chrome_reacquire_enabled()
+            {
                 let mut reacquire_budget: u32 = 2;
+                let mut reacquire_attempt: u32 = 0;
                 while reacquire_budget > 0
                     && browser_dead.load(std::sync::atomic::Ordering::Acquire)
                     && (page.needs_retry() || page.is_empty())
@@ -5446,6 +5481,14 @@ impl Website {
                         self.url.inner().as_str(),
                         reacquire_budget
                     );
+                    // Decorrelate concurrent re-acquisitions with full jitter
+                    // so a saturated gateway isn't hit in lockstep.
+                    let reacquire_jitter =
+                        crate::utils::backoff::backoff_delay(reacquire_attempt, 250, 5_000);
+                    reacquire_attempt += 1;
+                    if !reacquire_jitter.is_zero() {
+                        tokio::time::sleep(reacquire_jitter).await;
+                    }
                     match crate::features::chrome::relaunch_browser_at(
                         browser.websocket_address().clone(),
                         &self.configuration,

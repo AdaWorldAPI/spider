@@ -461,6 +461,24 @@ lazy_static! {
 /// further when the caller sets a smaller `request_timeout`.
 const CHROME_FAILOVER_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Runtime opt-out for the in-request gateway re-acquire path.
+///
+/// Enabled by default. Set `SPIDER_CHROME_REACQUIRE` to `0`, `false`, or `off`
+/// to restore the prior behavior where a browser that dies mid-request is not
+/// re-acquired within that request. Evaluated once and cached (lock-free), so
+/// it costs nothing on the hot path and is byte-identical when the variable is
+/// unset.
+pub(crate) fn chrome_reacquire_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| match std::env::var("SPIDER_CHROME_REACQUIRE") {
+        Ok(v) => {
+            let v = v.trim();
+            !(v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off"))
+        }
+        Err(_) => true,
+    })
+}
+
 /// Lock-free failover across multiple remote Chrome endpoints.
 ///
 /// Tracks per-endpoint consecutive errors with atomics. When an endpoint
@@ -645,11 +663,19 @@ impl ChromeConnectionFailover {
         let handler_config_base = create_handler_config(config);
 
         // Bound each connect attempt so a hung peer fails over instead of
-        // blocking up to the remote gateway's own ~35s acquisition timeout.
+        // blocking up to the remote gateway's own acquisition timeout.
         let connect_timeout = config
             .request_timeout
             .map(|t| t.min(CHROME_FAILOVER_CONNECT_TIMEOUT))
             .unwrap_or(CHROME_FAILOVER_CONNECT_TIMEOUT);
+        // A zero `request_timeout` (a "no timeout" sentinel some callers pass)
+        // would make every connect attempt elapse instantly and never acquire a
+        // browser; fall back to the default connect cap in that case.
+        let connect_timeout = if connect_timeout.is_zero() {
+            CHROME_FAILOVER_CONNECT_TIMEOUT
+        } else {
+            connect_timeout
+        };
 
         let started = std::time::Instant::now();
         let total = self.urls.len();
@@ -663,12 +689,13 @@ impl ChromeConnectionFailover {
             // Pass 0 honors cooldowns; pass 1 ignores them so we never
             // return None solely because every endpoint is in cooldown.
             let now = if pass == 0 { Self::now_millis() } else { 0 };
-            let mut all_cooled_down = true;
+            let mut any_cooled_down = false;
 
             for (idx, url) in self.urls.iter().enumerate() {
                 if pass == 0 {
                     let until = self.dead_until[idx].load(std::sync::atomic::Ordering::Acquire);
                     if until > now {
+                        any_cooled_down = true;
                         log::debug!(
                             "[chrome-failover] peer {}/{} ({}) skipped — unhealthy, {}ms cooldown remaining",
                             idx + 1,
@@ -679,7 +706,6 @@ impl ChromeConnectionFailover {
                         continue;
                     }
                 }
-                all_cooled_down = false;
                 let err_count = &self.errors[idx];
 
                 for attempt in 0..=self.max_retries {
@@ -768,9 +794,10 @@ impl ChromeConnectionFailover {
                 }
             }
 
-            // Nothing was actually attempted this pass — every endpoint
-            // was in cooldown. Fall through to pass 1 (ignore cooldowns).
-            if !all_cooled_down {
+            // Pass 0 found no healthy peer. Only fall through to pass 1 (which
+            // ignores cooldowns) when some peer was skipped for cooldown —
+            // otherwise pass 1 would just re-attempt the peers we just failed.
+            if pass == 0 && !any_cooled_down {
                 break;
             }
         }
@@ -860,11 +887,18 @@ pub async fn setup_browser_configuration(
             let mut browser = None;
 
             // Bound each connect so a hung remote (cold / over-subscribed pool)
-            // retries with backoff instead of blocking on the gateway's ~35s cap.
+            // retries with backoff instead of blocking on the gateway's cap.
             let connect_timeout = config
                 .request_timeout
                 .map(|t| t.min(CHROME_FAILOVER_CONNECT_TIMEOUT))
                 .unwrap_or(CHROME_FAILOVER_CONNECT_TIMEOUT);
+            // A zero `request_timeout` would make every attempt elapse instantly
+            // and never connect; fall back to the default connect cap.
+            let connect_timeout = if connect_timeout.is_zero() {
+                CHROME_FAILOVER_CONNECT_TIMEOUT
+            } else {
+                connect_timeout
+            };
 
             // Attempt reconnections for instances that may be on load balancers (LBs)
             // experiencing shutdowns or degradation. This logic implements a retry
