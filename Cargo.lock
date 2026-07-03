@@ -1107,7 +1107,7 @@ version = "0.0.0"
 dependencies = [
  "criterion",
  "spider",
- "spider_utils 2.52.4",
+ "spider_utils 2.52.5",
 ]
 
 [[package]]
@@ -2796,7 +2796,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3037,7 +3037,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3186,7 +3186,7 @@ version = "0.0.62"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88587bc3328375d9866f0f71ffcfe5768fe0df79dde79c79216239711868f77f"
 dependencies = [
- "auto_encoder 0.1.10",
+ "auto_encoder 0.2.4",
  "futures-util",
  "lazy_static",
  "lol_html",
@@ -4639,12 +4639,12 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "system-configuration 0.7.0",
  "tokio",
  "tower-service",
  "tracing",
- "windows-registry 0.5.3",
+ "windows-registry 0.6.1",
 ]
 
 [[package]]
@@ -5280,7 +5280,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8cfc352a66ba903c23239ef51e809508b6fc2b0f90e3476ac7a9ff47e863ae95"
 dependencies = [
  "scopeguard",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7296,7 +7296,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -7334,7 +7334,7 @@ dependencies = [
  "cfg_aliases 0.2.1",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -8076,7 +8076,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8154,7 +8154,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 1.0.8",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9037,7 +9037,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -9104,7 +9104,7 @@ dependencies = [
 
 [[package]]
 name = "spider"
-version = "2.52.4"
+version = "2.52.5"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -9244,7 +9244,7 @@ dependencies = [
 
 [[package]]
 name = "spider_agent"
-version = "2.52.4"
+version = "2.52.5"
 dependencies = [
  "aho-corasick",
  "async-openai 0.35.0",
@@ -9284,7 +9284,7 @@ dependencies = [
 
 [[package]]
 name = "spider_agent_html"
-version = "2.52.4"
+version = "2.52.5"
 dependencies = [
  "aho-corasick",
  "lol_html",
@@ -9295,7 +9295,7 @@ dependencies = [
 
 [[package]]
 name = "spider_agent_types"
-version = "2.52.4"
+version = "2.52.5"
 dependencies = [
  "aho-corasick",
  "llm_models_spider",
@@ -9345,7 +9345,7 @@ dependencies = [
 
 [[package]]
 name = "spider_cli"
-version = "2.52.4"
+version = "2.52.5"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -9421,7 +9421,7 @@ dependencies = [
 
 [[package]]
 name = "spider_mcp"
-version = "2.52.4"
+version = "2.52.5"
 dependencies = [
  "clap",
  "dashmap",
@@ -9557,7 +9557,7 @@ dependencies = [
 
 [[package]]
 name = "spider_utils"
-version = "2.52.4"
+version = "2.52.5"
 dependencies = [
  "hashbrown 0.17.1",
  "indexmap",
@@ -9572,7 +9572,7 @@ dependencies = [
 
 [[package]]
 name = "spider_worker"
-version = "2.52.4"
+version = "2.52.5"
 dependencies = [
  "env_logger",
  "hyper",
@@ -10221,7 +10221,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11581,7 +11581,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11974,7 +11974,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
 dependencies = [
  "cfg-if",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
