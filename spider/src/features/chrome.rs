@@ -455,10 +455,10 @@ lazy_static! {
 /// Default per-attempt connect timeout for the chrome failover.
 ///
 /// Generous enough that a legitimately slow cold-start still connects, but
-/// bounded *under* the remote browser gateway's own ~35s acquisition timeout so
-/// a cold / over-subscribed peer that hangs on CDP session acquisition fails
-/// over to a healthy peer first instead of burning the full 35s. Tightened
-/// further when the caller sets a smaller `request_timeout`.
+/// bounded *under* the remote browser gateway's own acquisition timeout so a
+/// cold / over-subscribed peer that hangs on CDP session acquisition fails over
+/// to a healthy peer first instead of blocking on it. Tightened further when
+/// the caller sets a smaller `request_timeout`.
 const CHROME_FAILOVER_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Runtime opt-out for the in-request gateway re-acquire path.
@@ -1155,15 +1155,14 @@ pub async fn launch_browser_base(
 /// session — handler task + isolated browser context.
 ///
 /// Used by the in-request reconnect (e.g. `crawl_establish`) so a navigation
-/// that died on the gateway's ~35s pool-acquisition timeout gets a fresh
-/// acquisition. NOTE: in the cloud deployment `ws_url` (the primary's
-/// `websocket_address()`) is the **LB ingress**, not a direct backend — the
-/// gateway exposes no per-backend addresses — so this is a fresh LB
-/// acquisition, not a physical-peer pin. It still helps: the ~28%
-/// acquisition-timeout is roughly independent per attempt, so retrying cuts the
+/// that died on a gateway acquisition timeout gets a fresh acquisition. NOTE:
+/// `ws_url` (the primary's `websocket_address()`) may resolve to a gateway
+/// ingress rather than a specific backend, so this is a fresh acquisition, not
+/// a pinned reconnect to the same backend. It still helps when acquisition
+/// failures are roughly independent per attempt, so retrying cuts the
 /// compounded failure rate. Returns `None` when the re-acquire fails (caller
-/// gives up rather than loop). The handler `JoinHandle` is the caller's to abort
-/// when done.
+/// gives up rather than loop). The handler `JoinHandle` is the caller's to
+/// abort when done.
 pub(crate) async fn relaunch_browser_at(
     ws_url: String,
     config: &Configuration,
@@ -1798,13 +1797,12 @@ impl HedgeBrowser {
     ///
     /// Open a second connection for the hedge to race on.
     ///
-    /// When `chrome_connection_urls` has a second entry, dials that URL so the
-    /// load balancer can route to a (possibly) different backend; falls back to
-    /// `chrome_connection_url`, then to the primary's `websocket_address()`.
-    /// NOTE: in the cloud deployment all of these resolve to the LB ingress —
-    /// `websocket_address()` is the LB URL, not a direct backend (the gateway
-    /// exposes no per-backend addresses), so this is a fresh LB acquisition, not
-    /// a physical-peer pin.
+    /// When `chrome_connection_urls` has a second entry, dials that URL so an
+    /// upstream load balancer can route to a (possibly) different backend; falls
+    /// back to `chrome_connection_url`, then to the primary's
+    /// `websocket_address()`. NOTE: these may all resolve to the same gateway
+    /// ingress rather than distinct backends, so this is a fresh acquisition,
+    /// not a pinned reconnect to a specific backend.
     ///
     /// Captures the chosen URL on `connected_url` and creates a fresh
     /// `browser_dead` AtomicBool wired into the handler task — so when

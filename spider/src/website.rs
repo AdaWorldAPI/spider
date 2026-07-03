@@ -4804,9 +4804,9 @@ impl Website {
         chrome_page: &chromiumoxide::Page,
         // Gateway re-acquire inputs: the primary browser (for `websocket_address()`)
         // and its `browser_dead` flag. Used to re-dial the gateway for a fresh
-        // acquisition on a dead-browser / gateway-timeout failure. (The gateway
-        // exposes no per-backend address, so this re-runs the LB acquisition — a
-        // reliability retry, not a physical-peer pin.)
+        // acquisition on a dead-browser / gateway-timeout failure. (The endpoint
+        // may resolve to a gateway ingress rather than a specific backend, so
+        // this is a fresh acquisition retry, not a pinned reconnect.)
         browser: &chromiumoxide::Browser,
         browser_dead: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> HashSet<CaseInsensitiveString> {
