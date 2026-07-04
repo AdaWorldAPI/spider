@@ -16,6 +16,20 @@ lazy_static! {
     };
 }
 
+/// Optional cap on the number of URLs a single glob pattern may expand to, read
+/// from `SPIDER_GLOB_MAX_EXPANSION`. Unset or `0` = unlimited (byte-identical to
+/// the historical behaviour); a positive value refuses to materialize a larger
+/// expansion so a crafted range (e.g. `[0-2000000000]`) can't OOM before crawling.
+fn glob_max_expansion() -> Option<usize> {
+    match std::env::var("SPIDER_GLOB_MAX_EXPANSION")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        None | Some(0) => None,
+        Some(n) => Some(n),
+    }
+}
+
 /// expand a website url to a glob pattern set
 pub fn expand_url(url: &str) -> Vec<CaseInsensitiveString> {
     use itertools::Itertools;
@@ -46,7 +60,10 @@ pub fn expand_url(url: &str) -> Vec<CaseInsensitiveString> {
             (_, _, Some(range), Some(start), Some(end)) => {
                 let substring = range.as_str();
                 let step = match capture.name("step") {
-                    Some(step) => step.as_str().parse::<usize>().unwrap(),
+                    // A malformed or overflowing step must not panic; fall back
+                    // to 1. `.max(1)` guarantees `step_by` never receives 0
+                    // (which panics with "step must be non-zero").
+                    Some(step) => step.as_str().parse::<usize>().unwrap_or(1).max(1),
                     None => 1,
                 };
                 let start_str = start.as_str();
@@ -66,15 +83,22 @@ pub fn expand_url(url: &str) -> Vec<CaseInsensitiveString> {
                 match (start_str.parse::<u32>(), end_str.parse::<u32>()) {
                     // start and end are numbers
                     (Ok(s), Ok(e)) => {
-                        let items = (s..e + 1)
-                            .step_by(step)
-                            .map(|num| {
-                                (
-                                    format!("{:0>width$}", num.to_string(), width = width),
-                                    substring,
-                                )
-                            })
-                            .collect::<Vec<(String, &str)>>();
+                        // `e + 1` overflows when `e == u32::MAX`. Compute the
+                        // exclusive end with checked_add and fall back to an empty
+                        // range on overflow — byte-identical to the prior
+                        // release-mode wrap-to-empty, but without the debug panic.
+                        let items = match e.checked_add(1) {
+                            Some(end) => (s..end)
+                                .step_by(step)
+                                .map(|num| {
+                                    (
+                                        format!("{:0>width$}", num.to_string(), width = width),
+                                        substring,
+                                    )
+                                })
+                                .collect::<Vec<(String, &str)>>(),
+                            None => Vec::new(),
+                        };
 
                         matches.push(items);
                     }
@@ -96,6 +120,23 @@ pub fn expand_url(url: &str) -> Vec<CaseInsensitiveString> {
 
     if matches.is_empty() {
         return Vec::new();
+    }
+
+    // Optional expansion cap (see `glob_max_expansion`). Unset/0 => skipped =>
+    // byte-identical. `checked_mul` keeps the size computation itself from
+    // overflowing; an overflow is treated as "over cap".
+    if let Some(max) = glob_max_expansion() {
+        let total = matches
+            .iter()
+            .try_fold(1usize, |acc, m| acc.checked_mul(m.len()));
+        if total.map_or(true, |n| n > max) {
+            log::warn!(
+                "glob expansion of {:?} exceeds SPIDER_GLOB_MAX_EXPANSION={}; skipping expansion",
+                url,
+                max
+            );
+            return Vec::new();
+        }
     }
 
     matches

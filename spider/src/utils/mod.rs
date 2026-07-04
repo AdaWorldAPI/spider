@@ -8652,11 +8652,13 @@ pub async fn openai_request(
 
 #[cfg(any(feature = "gemini", feature = "real_browser"))]
 lazy_static! {
+    /// Total permits held by [`GEMINI_SEM`]. Callers must never request more than
+    /// this at once — `Semaphore::acquire_many(n)` with `n` greater than the total
+    /// never resolves (permits are never added), which would hang the caller.
+    pub static ref GEMINI_SEM_PERMITS: usize = (num_cpus::get() * 2).max(8);
     /// Semaphore for Gemini rate limiting
-    pub static ref GEMINI_SEM: tokio::sync::Semaphore = {
-        let sem_limit = (num_cpus::get() * 2).max(8);
-        tokio::sync::Semaphore::const_new(sem_limit)
-    };
+    pub static ref GEMINI_SEM: tokio::sync::Semaphore =
+        tokio::sync::Semaphore::const_new(*GEMINI_SEM_PERMITS);
 }
 
 #[cfg(not(feature = "gemini"))]
@@ -9552,10 +9554,30 @@ where
 /// Period to wait to rebalance cpu in means of IO being main impact.
 const REBALANCE_TIME: std::time::Duration = std::time::Duration::from_millis(100);
 
+#[cfg(feature = "balance")]
+lazy_static! {
+    /// When set, `get_semaphore` never swaps to the shared pool under load — it
+    /// keeps honoring the per-website `concurrency_limit`. Default off, so the
+    /// historical behaviour (swap to `SEM_SHARED` when load >= 1) is unchanged.
+    /// Read once at startup to keep the crawl hot-path allocation-free.
+    static ref RESPECT_CONCURRENCY_UNDER_LOAD: bool =
+        std::env::var("SPIDER_RESPECT_CONCURRENCY_UNDER_LOAD")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+}
+
 /// Return the semaphore that should be used.
 /// Takes the worse of CPU and process memory pressure to drive throttling.
 #[cfg(feature = "balance")]
 pub async fn get_semaphore(semaphore: &Arc<Semaphore>, detect: bool) -> &Arc<Semaphore> {
+    // Opt-in (default off => byte-identical): honor the per-website limit even
+    // under load instead of widening it to the process-global shared pool, which
+    // silently overrode a deliberately-low concurrency_limit and could let peak
+    // in-flight exceed either configured bound across load transitions.
+    if *RESPECT_CONCURRENCY_UNDER_LOAD {
+        return semaphore;
+    }
+
     let (cpu_load, mem_load) = if detect {
         (
             detect_system::get_global_cpu_state_sync(),

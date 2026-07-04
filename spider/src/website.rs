@@ -1057,6 +1057,34 @@ lazy_static! {
     };
 }
 
+#[cfg(feature = "sitemap")]
+lazy_static! {
+    /// When set, sitemap URLs are charged against the crawl budget so a large or
+    /// adversarial sitemap-index tree can't fetch unboundedly. Default off = the
+    /// historical budgetless sitemap traversal (byte-identical). Read once.
+    static ref SITEMAP_RESPECT_BUDGET: bool =
+        std::env::var("SPIDER_SITEMAP_RESPECT_BUDGET")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+}
+
+#[cfg(all(
+    feature = "balance",
+    not(feature = "decentralized"),
+    any(feature = "chrome", feature = "spider_cloud")
+))]
+lazy_static! {
+    /// When set, retained scrape pages also drop their screenshot / content-map
+    /// bytes under memory pressure. Unlike HTML these cannot be spooled+restored
+    /// transparently (public fields, no accessor hook), so this is a lossy
+    /// last-resort valve for the retained copy — subscribers already received the
+    /// full page before it was retained. Default off = byte-identical. Read once.
+    static ref SHED_MEDIA_UNDER_PRESSURE: bool =
+        std::env::var("SPIDER_SHED_MEDIA_UNDER_PRESSURE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+}
+
 #[cfg(feature = "decentralized")]
 lazy_static! {
     /// The global worker count.
@@ -1949,6 +1977,19 @@ impl Website {
                 return ProcessLinkStatus::Blocked;
             }
             status
+        }
+    }
+
+    /// Budget check for sitemap URLs. When `SPIDER_SITEMAP_RESPECT_BUDGET` is set
+    /// the sitemap fetch is charged against the crawl budget (and traversal stops
+    /// once the budget is exhausted); default off keeps the historical budgetless
+    /// sitemap traversal, so the default path is byte-identical.
+    #[cfg(feature = "sitemap")]
+    pub(crate) fn is_allowed_sitemap(&mut self, link: &CaseInsensitiveString) -> ProcessLinkStatus {
+        if *SITEMAP_RESPECT_BUDGET {
+            self.is_allowed(link)
+        } else {
+            self.is_allowed_budgetless(link)
         }
     }
 
@@ -7371,6 +7412,28 @@ impl Website {
             if html_len > 0 && crate::utils::html_spool::should_spool(html_len) {
                 page.spool_html_to_disk_async().await;
             }
+
+            // Opt-in (default off => byte-identical): under memory pressure also
+            // drop retained screenshot / content-map bytes. Reuses the same
+            // `should_spool` pressure+size heuristic as HTML; lossy for the
+            // retained copy only.
+            #[cfg(any(feature = "chrome", feature = "spider_cloud"))]
+            if *SHED_MEDIA_UNDER_PRESSURE {
+                #[cfg(feature = "chrome")]
+                if page
+                    .screenshot_bytes
+                    .as_ref()
+                    .is_some_and(|b| crate::utils::html_spool::should_spool(b.len()))
+                {
+                    page.screenshot_bytes = None;
+                }
+                #[cfg(feature = "spider_cloud")]
+                if page.content_map.as_ref().is_some_and(|m| {
+                    crate::utils::html_spool::should_spool(m.values().map(|b| b.len()).sum())
+                }) {
+                    page.content_map = None;
+                }
+            }
         }
     }
 
@@ -7595,7 +7658,21 @@ impl Website {
         }
 
         if let Some(q) = q {
-            while let Ok(link) = q.try_recv() {
+            loop {
+                let link = match q.try_recv() {
+                    Ok(link) => link,
+                    // Lagged: the producer outran the drain and the broadcast ring
+                    // overwrote the oldest URLs. Log the loss and keep draining the
+                    // newer entries instead of aborting the drain, which previously
+                    // stranded everything still buffered behind the lag.
+                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+                        log::warn!("crawl queue lagged; {n} queued URLs were dropped");
+                        continue;
+                    }
+                    // Empty (fully drained) or Closed (sender gone): done.
+                    Err(_) => break,
+                };
+
                 let s = link.into();
                 let allowed = self.is_allowed_budgetless(&s);
 
@@ -11764,10 +11841,16 @@ impl Website {
 
                     let link = <CompactString as Clone>::clone(&(*sitemap_url)).into();
 
-                    let allowed = self.is_allowed_budgetless(&link);
+                    let allowed = self.is_allowed_sitemap(&link);
 
                     if allowed.eq(&ProcessLinkStatus::Blocked) {
                         continue;
+                    }
+
+                    // Gated: only reachable when SPIDER_SITEMAP_RESPECT_BUDGET is
+                    // on (otherwise the check is budgetless and never returns this).
+                    if allowed.eq(&ProcessLinkStatus::BudgetExceeded) {
+                        break 'outer;
                     }
 
                     self.insert_link(&link).await;
@@ -12003,10 +12086,16 @@ impl Website {
 
                             let link = <CompactString as Clone>::clone(&(*sitemap_url)).into();
 
-                            let allowed = self.is_allowed_budgetless(&link);
+                            let allowed = self.is_allowed_sitemap(&link);
 
                             if allowed.eq(&ProcessLinkStatus::Blocked) {
                                 continue;
+                            }
+
+                            // Gated: only reachable when SPIDER_SITEMAP_RESPECT_BUDGET
+                            // is on (otherwise budgetless never returns this).
+                            if allowed.eq(&ProcessLinkStatus::BudgetExceeded) {
+                                break 'outer;
                             }
 
                             self.insert_link(&link).await;
