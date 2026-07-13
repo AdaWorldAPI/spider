@@ -1,0 +1,16 @@
+[package]
+name = "spider_doc_ir"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "W3 of the OGAR doc-IR convergence: the DOM retina. Harvests an HTML page into the source-agnostic `ogar-doc-ir` perceptual IR (region tree) using the same streaming `lol_html` parser `spider_agent_html` uses — so a web page and a scanned document produce ONE shape."
+repository = "https://github.com/AdaWorldAPI/spider"
+
+[dependencies]
+lol_html = "2"
+sha2 = "0.10"
+# The source-agnostic perceptual IR (OGAR). On OGAR main since #197 merged
+# (2026-07-13). Floats on main like the workspace's other AdaWorldAPI git
+# deps; drift protection is the fixture tests below. ogar-doc-ir is
+# serde-only + canon-free.
+ogar-doc-ir = { git = "https://github.com/AdaWorldAPI/OGAR", branch = "main" }
