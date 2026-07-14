@@ -6460,6 +6460,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ogar-doc-ir"
+version = "0.1.0"
+source = "git+https://github.com/AdaWorldAPI/OGAR?branch=main#ca56c228a47ceab30f3bb93fce0e92c1a1e2d38e"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9363,6 +9372,15 @@ dependencies = [
  "tikv-jemallocator",
  "tokio",
  "unicode-normalization",
+]
+
+[[package]]
+name = "spider_doc_ir"
+version = "0.1.0"
+dependencies = [
+ "lol_html",
+ "ogar-doc-ir",
+ "sha2 0.10.9",
 ]
 
 [[package]]
